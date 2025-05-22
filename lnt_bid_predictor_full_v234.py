@@ -11,11 +11,11 @@ import plotly.express as px
 from io import BytesIO
 import datetime
 
-st.set_page_config(page_title="L&T Bid Predictor - Smart Adjust", layout="wide")
+st.set_page_config(page_title="L&T Bid Predictor – Smart Adjust", layout="wide")
 
 @st.cache_data
 def load_data(path):
-    df = pd.read_excel(path)
+    df = pd.read_excel("data.xlsx")
     cat_cols = [
         'Product Type', 'Project Region', 'Project Geography/ Location', 'Licensor',
         'Shell (MOC)', 'Weld Overlay/ Clad Applicable (Yes or No)', 'Sourcing Restrictions (Yes or No)'
@@ -39,8 +39,10 @@ def load_data(path):
         all_cols += ['Bid Month']
     X = df[all_cols]
     y = LabelEncoder().fit_transform(df['Result(w/L)'])
+
     scaler = StandardScaler()
     X[num_cols] = scaler.fit_transform(X[num_cols])
+
     return X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, df
 
 X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, full_data = load_data("data.xlsx")
@@ -54,7 +56,7 @@ def train_model(X, y):
 
 model, X_test, y_test = train_model(X, y)
 
-st.title("🏗️ L&T Bid Predictor – Phase 5: Smart Adjust")
+st.title("🏗️ L&T Bid Predictor – Smart Adjust & Apply")
 
 st.sidebar.header("📊 Model Performance")
 st.sidebar.metric("Accuracy", f"{accuracy_score(y_test, model.predict(X_test)):.2%}")
@@ -115,17 +117,25 @@ if st.button("🚩 Predict Now"):
         tip = "Try reducing" if input_df[feat].values[0] > X[feat].mean() else "Try optimizing"
         st.write(f"- {tip} **{feat}**")
 
-    # 🔁 Smart Auto Adjust
+    # 🔁 Smart Adjust
     if result == "❌ LOSE":
         st.subheader("🔁 Make this Bid WIN (Auto Adjust)")
+
         adjusted_input_df = input_df.copy()
+        applied_changes = {}
 
         for feat in top_feats:
             if feat in num_cols:
                 adjusted_input_df[feat] = X[feat].mean() * 0.9
+                applied_changes[feat] = (input_df[feat].values[0], adjusted_input_df[feat].values[0])
             elif feat in cat_cols:
                 most_common = X[feat].value_counts().idxmax()
                 adjusted_input_df[feat] = most_common
+                original = input_df[feat].values[0]
+                if original != most_common:
+                    original_label = list(inv_le_dict[feat].keys())[list(inv_le_dict[feat].values()).index(original)]
+                    new_label = list(inv_le_dict[feat].keys())[list(inv_le_dict[feat].values()).index(most_common)]
+                    applied_changes[feat] = (original_label, new_label)
 
         adjusted_input_df = adjusted_input_df.reindex(columns=X.columns, fill_value=0)
         new_pred = model.predict(adjusted_input_df)[0]
@@ -136,13 +146,14 @@ if st.button("🚩 Predict Now"):
             st.success("🎯 Success: Auto-adjusted bid turns into WIN!")
             st.markdown(f"**Updated Confidence:** {new_proba:.2%}")
             st.markdown("#### 🔧 Adjusted Values:")
-            for feat in top_feats:
-                old = input_df[feat].values[0]
-                new = adjusted_input_df[feat].values[0]
-                if old != new:
-                    st.write(f"- {feat}: {old:.2f} ➝ {new:.2f}")
+            for feat, (old, new) in applied_changes.items():
+                st.write(f"- **{feat}**: {old} ➝ {new}")
+
+            if st.button("✅ Apply Adjustments to Form"):
+                st.experimental_set_query_params(**user_input)  # optional: save state
+                st.rerun()
         else:
-            st.warning("⚠️ Tried all adjustments but still predicted as LOSS")
+            st.warning("⚠️ Tried adjustments but still predicted as LOSS")
 
     # 📥 Download Report
     report = f"Prediction: {result} ({proba:.2%})\\n\\nTop Factors:\\n"
