@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -40,6 +39,7 @@ def load_data(path):
         all_cols += ['Bid Month']
     X = df[all_cols]
     y = LabelEncoder().fit_transform(df['Result(w/L)'])
+
     scaler = StandardScaler()
     X[num_cols] = scaler.fit_transform(X[num_cols])
     return X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, df
@@ -55,9 +55,8 @@ def train_model(X, y):
 
 model, X_test, y_test = train_model(X, y)
 
-st.title("🏗️ L&T Bid Predictor – Full Dashboard (Phase 2–4)")
+st.title("🏗️ L&T Bid Predictor – Full Dashboard")
 
-# Sidebar metrics
 st.sidebar.header("📊 Model Performance")
 st.sidebar.metric("Accuracy", f"{accuracy_score(y_test, model.predict(X_test)):.2%}")
 st.sidebar.text("Classification Report")
@@ -74,7 +73,7 @@ fig2, ax2 = plt.subplots()
 importance.plot(kind='barh', color='skyblue', ax=ax2)
 st.pyplot(fig2)
 
-# Phase 2: Visualizations
+# 📍 Region Analysis
 if 'Project Geography/ Location' in full_data.columns:
     st.subheader("🌍 Geo Impact Analysis")
     geo_df = full_data.copy()
@@ -82,18 +81,20 @@ if 'Project Geography/ Location' in full_data.columns:
     geo_fig = px.histogram(geo_df, x='Project Geography/ Location', color='Result Encoded', barmode='group')
     st.plotly_chart(geo_fig)
 
+# 📉 Historical Trend by Product
 if 'Product Type' in full_data.columns:
     st.subheader("📉 Historical Win Rate by Product Type")
     hist_fig = px.histogram(full_data, x='Product Type', color='Result(w/L)', barmode='group')
     st.plotly_chart(hist_fig)
 
+# 🗓 Monthly Bid Trend
 if 'Bid Month' in X.columns:
     st.subheader("📅 Win Trends by Bid Month")
     month_fig = px.histogram(full_data, x='Bid Month', color='Result(w/L)', barmode='group')
     st.plotly_chart(month_fig)
 
-# Phase 3: What-if Sliders
-st.subheader("🔍 Predict Individual Bid (With What-if Sliders)")
+# 🔍 Predict
+st.subheader("🔍 Predict Individual Bid")
 user_input = {}
 col1, col2 = st.columns(2)
 with col1:
@@ -103,20 +104,29 @@ with col2:
     for col in num_cols:
         user_input[col] = st.slider(col, float(full_data[col].min()), float(full_data[col].max()), float(full_data[col].median()))
 
-bid_month = st.slider("Bid Month", 1, 12, 6)
+if 'Bid Month' in X.columns:
+    bid_month = st.slider("Bid Month", 1, 12, 6)
+else:
+    bid_month = None
 
 if st.button("🚩 Predict Now"):
     input_df = pd.DataFrame([user_input])
     for col in cat_cols:
         input_df[col] = le_dict[col].transform([input_df[col][0]])
     input_df[num_cols] = scaler.transform(input_df[num_cols])
-    input_df["Bid Month"] = bid_month
+    if bid_month:
+        input_df["Bid Month"] = bid_month
 
+    # ✅ Ensure input_df has exact columns in same order as X
+    input_df = input_df.reindex(columns=X.columns, fill_value=0)
+
+    # 🔮 Prediction
     pred = model.predict(input_df)[0]
     proba = model.predict_proba(input_df)[0][pred]
     result = "✅ WIN" if pred == 1 else "❌ LOSE"
     st.markdown(f"### 🎯 Prediction: {result} ({proba:.2%} confidence)")
 
+    # 🧠 Explanation
     st.subheader("🧠 Why this outcome?")
     top_feats = importance.sort_values(ascending=False).head(3).index.tolist()
     for feat in top_feats:
@@ -125,28 +135,17 @@ if st.button("🚩 Predict Now"):
         direction = "higher" if val > avg else "lower"
         st.write(f"- **{feat}** is {direction} than average ({val:.2f} vs {avg:.2f})")
 
+    # 🛠 Suggestions
     st.subheader("🛠 Suggestions to Improve")
     for feat in top_feats:
         tip = "Try reducing" if input_df[feat].values[0] > X[feat].mean() else "Try optimizing"
         st.write(f"- {tip} **{feat}**")
 
-    report = f"Prediction: {result} ({proba:.2%})\n\nTop Factors:\n"
+    # 📥 Download Report
+    report = f"Prediction: {result} ({proba:.2%})\\n\\nTop Factors:\\n"
     for feat in top_feats:
-        report += f"- {feat}: input={input_df[feat].values[0]:.2f}, avg={X[feat].mean():.2f}\n"
+        report += f"- {feat}: input={input_df[feat].values[0]:.2f}, avg={X[feat].mean():.2f}\\n"
     buffer = BytesIO()
     buffer.write(report.encode())
     buffer.seek(0)
     st.download_button("📥 Download Summary Report", buffer, file_name="prediction_summary.txt")
-
-# Phase 3: Batch Upload Preview
-st.subheader("📦 Upload CSV for Batch Predictions (Coming Soon)")
-batch_file = st.file_uploader("Upload .csv file", type=["csv"])
-if batch_file:
-    df_batch = pd.read_csv(batch_file)
-    st.dataframe(df_batch.head())
-    st.warning("Batch prediction is under construction.")
-
-# Phase 4 Placeholder: Email and Admin Controls
-st.subheader("📧 Email Result (Coming Soon)")
-st.text_input("Enter your email")
-st.button("Send Report (disabled)")
