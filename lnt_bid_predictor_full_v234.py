@@ -2,16 +2,15 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from xgboost import XGBClassifier
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from interpret.glassbox import ExplainableBoostingClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import matplotlib.pyplot as plt
-import seaborn as sns
 from io import BytesIO
 
-st.set_page_config(page_title="L&T Bid Predictor – Smart Adjust", layout="wide")
+st.set_page_config(page_title="L&T Bid Predictor – EBM & Price Logic", layout="wide")
 
-# Load static Excel file (no upload feature)
+# Load data with price logic features
 def load_data():
     df = pd.read_excel("data.xlsx")
 
@@ -19,36 +18,26 @@ def load_data():
         'Product Type', 'Project Region', 'Project Geography/ Location', 'Licensor',
         'Shell (MOC)', 'Weld Overlay/ Clad Applicable (Yes or No)', 'Sourcing Restrictions (Yes or No)'
     ]
-    num_cols_all = [
-        'ID (mm)', 'Weight (MT)', 'Price($ / Kg)', 'Unit Cost($)', 'Total Cost($)',
-        'Off top (%)', 'Unit Price($)', 'Total price($)', 'Cost ($ / Kg)'
-    ]
-    num_cols = [col for col in num_cols_all if col in df.columns]
+    num_cols = ['ID (mm)', 'Weight (MT)', 'Price($ / Kg)', 'Total Cost($)', 'Total price($)', 'Cost ($ / Kg)']
 
-    if 'Bid Date' in df.columns:
-        df['Bid Month'] = pd.to_datetime(df['Bid Date']).dt.month
-
-    df = df.dropna(subset=['Result(w/L)'])
+    df = df.dropna(subset=['Result(w/L)', 'Weight (MT)', 'Price($ / Kg)', 'Total price($)'])
     df.fillna(method='ffill', inplace=True)
+
+    # Business logic feature: Bid Value
+    df['Total Bid Value'] = df['Weight (MT)'] * df['Price($ / Kg)']
+    num_cols.append('Total Bid Value')
 
     le_dict, inv_le_dict = {}, {}
     for col in cat_cols:
-        if col in df.columns:
-            le = LabelEncoder()
-            df[col] = le.fit_transform(df[col].astype(str))
-            le_dict[col] = le
-            inv_le_dict[col] = dict(zip(le.transform(le.classes_), le.classes_))
-    cat_cols = [col for col in cat_cols if col in df.columns]
+        le = LabelEncoder()
+        df[col] = le.fit_transform(df[col].astype(str))
+        le_dict[col] = le
+        inv_le_dict[col] = dict(zip(le.transform(le.classes_), le.classes_))
 
-    all_cols = cat_cols + num_cols
-    if 'Bid Month' in df.columns:
-        all_cols.append('Bid Month')
-
-    X = df[all_cols].copy()
+    X = df[cat_cols + num_cols].copy()
     y = LabelEncoder().fit_transform(df['Result(w/L)'])
-    scaler = StandardScaler()
-    if num_cols:
-        X[num_cols] = scaler.fit_transform(X[num_cols])
+    scaler = MinMaxScaler()
+    X[num_cols] = scaler.fit_transform(X[num_cols])
 
     return X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, df
 
@@ -57,20 +46,20 @@ X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, full_data = load_data()
 @st.cache_resource
 def train_model(X, y):
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
-    model = XGBClassifier(n_estimators=250, learning_rate=0.1, max_depth=4, eval_metric='logloss', use_label_encoder=False)
+    model = ExplainableBoostingClassifier(interactions=5)
     model.fit(X_train, y_train)
     return model, X_test, y_test
 
 model, X_test, y_test = train_model(X, y)
 
-st.title("🏗️ L&T Bid Predictor – Smart Adjust")
+st.title("🏗️ L&T Bid Predictor – EBM with Total Price Logic")
 
 st.sidebar.header("📊 Model Performance")
 st.sidebar.metric("Accuracy", f"{accuracy_score(y_test, model.predict(X_test)):.2%}")
 st.sidebar.text("Classification Report")
 st.sidebar.text(classification_report(y_test, model.predict(X_test)))
 
-st.subheader("🔍 Predict Individual Bid")
+st.subheader("🔍 Predict Your Bid")
 user_input = {}
 col1, col2 = st.columns(2)
 with col1:
@@ -78,77 +67,41 @@ with col1:
         user_input[col] = st.selectbox(col, list(inv_le_dict[col].values()))
 with col2:
     for col in num_cols:
-        user_input[col] = st.slider(col, float(full_data[col].min()), float(full_data[col].max()), float(full_data[col].median()))
+        min_val = float(full_data[col].min())
+        max_val = float(full_data[col].max())
+        default = float(full_data[col].median())
+        user_input[col] = st.slider(col, min_val, max_val, default)
 
-if 'Bid Month' in X.columns:
-    bid_month = st.slider("Bid Month", 1, 12, 6)
-else:
-    bid_month = None
-
-if st.button("🚩 Predict Now"):
+if st.button("🚩 Predict Bid Result"):
     input_df = pd.DataFrame([user_input])
     for col in cat_cols:
         input_df[col] = le_dict[col].transform([input_df[col][0]])
-    if num_cols:
-        input_df[num_cols] = scaler.transform(input_df[num_cols])
-    if bid_month:
-        input_df["Bid Month"] = bid_month
+    input_df[num_cols] = scaler.transform(input_df[num_cols])
 
-    input_df = input_df.reindex(columns=X.columns, fill_value=0)
     pred = model.predict(input_df)[0]
     proba = model.predict_proba(input_df)[0][pred]
     result = "✅ WIN" if pred == 1 else "❌ LOSE"
     st.markdown(f"### 🎯 Prediction: {result} ({proba:.2%} confidence)")
 
-    st.subheader("🧠 Why this outcome?")
-    top_feats = pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=False).head(3).index.tolist()
-    for feat in top_feats:
-        val = input_df[feat].values[0]
-        avg = X[feat].mean()
-        if feat in cat_cols:
-            val_name = list(inv_le_dict[feat].values())[list(inv_le_dict[feat].keys()).index(int(val))]
-            st.write(f"- **{feat}** is `{val_name}`, most common is `{inv_le_dict[feat][X[feat].value_counts().idxmax()]}`")
-        else:
-            direction = "higher" if val > avg else "lower"
-            st.write(f"- **{feat}** is {direction} than average ({val:.2f} vs {avg:.2f})")
+    st.subheader("🧠 Feature Effects (Top 3)")
+    ebm_feats = pd.DataFrame({
+        'feature': model.feature_names,
+        'importance': model.feature_importances_
+    }).sort_values(by='importance', ascending=False).head(3)
 
-    if result == "❌ LOSE":
-        st.subheader("🛠 Suggested Changes to Convert to WIN")
-        suggested_changes = {}
-        for feat in top_feats:
-            if feat in num_cols:
-                new_val = round(float(X[feat].mean()), 2)
-                suggested_changes[feat] = (float(input_df[feat].values[0]), new_val)
-                st.write(f"- **{feat}**: {input_df[feat].values[0]:.2f} ➝ {new_val:.2f}")
-            elif feat in cat_cols:
-                current_code = int(input_df[feat].values[0])
-                common_code = int(X[feat].value_counts().idxmax())
-                if current_code != common_code:
-                    old_label = inv_le_dict[feat][current_code]
-                    new_label = inv_le_dict[feat][common_code]
-                    suggested_changes[feat] = (old_label, new_label)
-                    st.write(f"- **{feat}**: '{old_label}' ➝ '{new_label}'")
+    for _, row in ebm_feats.iterrows():
+        st.write(f"- **{row['feature']}** had high impact on outcome (Importance: {row['importance']:.4f})")
 
-        if st.button("✅ Apply Suggested Changes and Predict Again"):
-            for feat, (old, new) in suggested_changes.items():
-                if feat in cat_cols:
-                    input_df[feat] = le_dict[feat].transform([new])[0]
-                else:
-                    input_df[feat] = new
-            input_df = input_df.reindex(columns=X.columns, fill_value=0)
-            new_pred = model.predict(input_df)[0]
-            new_proba = model.predict_proba(input_df)[0][new_pred]
-            new_result = "✅ WIN" if new_pred == 1 else "❌ Still LOSE"
-            st.markdown(f"### 🔁 New Prediction After Changes: {new_result} ({new_proba:.2%} confidence)")
-            if new_result == "✅ WIN":
-                st.success("🎯 Prediction improved to WIN!")
-            else:
-                st.warning("⚠️ Still predicted as LOSS after suggested changes.")
+    st.subheader("📊 Key Bid Metric")
+    raw_price = float(user_input['Price($ / Kg)'])
+    weight = float(user_input['Weight (MT)'])
+    bid_value = raw_price * weight
+    st.markdown(f"**💰 Total Bid Value (Price × Weight)** = ${bid_value:,.2f}")
 
     buffer = BytesIO()
     report = f"Prediction: {result} ({proba:.2%} confidence)\n\nTop Features:\n"
-    for feat in top_feats:
-        report += f"- {feat}: {input_df[feat].values[0]}\n"
+    for _, row in ebm_feats.iterrows():
+        report += f"- {row['feature']}: Importance = {row['importance']:.4f}\n"
     buffer.write(report.encode())
     buffer.seek(0)
     st.download_button("📥 Download Summary Report", buffer, file_name="prediction_summary.txt")
