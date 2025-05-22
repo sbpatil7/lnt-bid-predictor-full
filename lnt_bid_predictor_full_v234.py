@@ -11,7 +11,7 @@ import plotly.express as px
 from io import BytesIO
 import datetime
 
-st.set_page_config(page_title="L&T Bid Predictor - Guided Adjust", layout="wide")
+st.set_page_config(page_title="L&T Bid Predictor - Guided Smart Adjust", layout="wide")
 
 @st.cache_data
 def load_data(path):
@@ -20,7 +20,9 @@ def load_data(path):
         'Product Type', 'Project Region', 'Project Geography/ Location', 'Licensor',
         'Shell (MOC)', 'Weld Overlay/ Clad Applicable (Yes or No)', 'Sourcing Restrictions (Yes or No)'
     ]
-    num_cols = ['ID (mm)', 'Weight (MT)', 'Price($ / Kg)']
+    num_cols = ['ID (mm)', 'Weight (MT)', 'Price($ / Kg)', 'Unit Cost($)', 'Total Cost($)',
+                'Off top (%)', 'Unit Price($)', 'Total price($)', 'Cost ($ / Kg)']
+
     if 'Bid Date' in df.columns:
         df['Bid Month'] = pd.to_datetime(df['Bid Date']).dt.month
 
@@ -44,7 +46,11 @@ def load_data(path):
 
     return X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, df
 
-X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, full_data = load_data("data.xlsx")
+uploaded_file = st.file_uploader("📁 Upload Excel File (with column: 'Result(w/L)')", type=['xlsx'])
+if uploaded_file:
+    X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, full_data = load_data(uploaded_file)
+else:
+    st.stop()
 
 @st.cache_resource
 def train_model(X, y):
