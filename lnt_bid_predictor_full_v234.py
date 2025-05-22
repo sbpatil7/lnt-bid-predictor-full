@@ -9,29 +9,20 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
 
-st.set_page_config(page_title="L&T Bid Predictor – Auto Fix", layout="wide")
+st.set_page_config(page_title="L&T Bid Predictor – Smart Adjust", layout="wide")
 
-@st.cache_data
-def load_data(path):
-    df = pd.read_excel(path)
+# Load static Excel file (no upload feature)
+def load_data():
+    df = pd.read_excel("data.xlsx")
 
-    required_cols = ['Product Type', 'Project Region', 'Project Geography/ Location', 'Licensor',
-                     'Shell (MOC)', 'Weld Overlay/ Clad Applicable (Yes or No)', 'Sourcing Restrictions (Yes or No)',
-                     'ID (mm)', 'Weight (MT)', 'Price($ / Kg)', 'Result(w/L)']
-
-    if not all(col in df.columns for col in required_cols):
-        missing = [col for col in required_cols if col not in df.columns]
-        raise ValueError(f"Missing required column(s): {missing}")
-
-    cat_cols = [col for col in [
+    cat_cols = [
         'Product Type', 'Project Region', 'Project Geography/ Location', 'Licensor',
         'Shell (MOC)', 'Weld Overlay/ Clad Applicable (Yes or No)', 'Sourcing Restrictions (Yes or No)'
-    ] if col in df.columns]
-
-    num_cols = [col for col in [
+    ]
+    num_cols = [
         'ID (mm)', 'Weight (MT)', 'Price($ / Kg)', 'Unit Cost($)', 'Total Cost($)',
         'Off top (%)', 'Unit Price($)', 'Total price($)', 'Cost ($ / Kg)'
-    ] if col in df.columns]
+    ]
 
     if 'Bid Date' in df.columns:
         df['Bid Month'] = pd.to_datetime(df['Bid Date']).dt.month
@@ -46,9 +37,9 @@ def load_data(path):
         le_dict[col] = le
         inv_le_dict[col] = dict(zip(le.transform(le.classes_), le.classes_))
 
-    all_cols = cat_cols + num_cols
+    all_cols = [col for col in cat_cols + num_cols if col in df.columns]
     if 'Bid Month' in df.columns:
-        all_cols += ['Bid Month']
+        all_cols.append('Bid Month')
 
     X = df[all_cols]
     y = LabelEncoder().fit_transform(df['Result(w/L)'])
@@ -57,16 +48,7 @@ def load_data(path):
 
     return X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, df
 
-uploaded_file = st.file_uploader("📁 Upload Excel File", type=['xlsx'])
-if uploaded_file:
-    try:
-        X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, full_data = load_data(uploaded_file)
-    except Exception as e:
-        st.error(f"❌ Error loading file: {e}")
-        st.stop()
-else:
-    st.warning("👆 Please upload an Excel file to continue.")
-    st.stop()
+X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, full_data = load_data()
 
 @st.cache_resource
 def train_model(X, y):
@@ -77,7 +59,7 @@ def train_model(X, y):
 
 model, X_test, y_test = train_model(X, y)
 
-st.title("🏗️ L&T Bid Predictor – Smart Auto Adjust")
+st.title("🏗️ L&T Bid Predictor – Smart Adjust")
 
 st.sidebar.header("📊 Model Performance")
 st.sidebar.metric("Accuracy", f"{accuracy_score(y_test, model.predict(X_test)):.2%}")
@@ -158,9 +140,8 @@ if st.button("🚩 Predict Now"):
             else:
                 st.warning("⚠️ Still predicted as LOSS after suggested changes.")
 
-    # 📥 Download Report
     buffer = BytesIO()
-    report = f"Prediction: {result} ({proba:.2%} confidence)\n\nTop Factors:\n"
+    report = f"Prediction: {result} ({proba:.2%} confidence)\n\nTop Features:\n"
     for feat in top_feats:
         report += f"- {feat}: {input_df[feat].values[0]}\n"
     buffer.write(report.encode())
