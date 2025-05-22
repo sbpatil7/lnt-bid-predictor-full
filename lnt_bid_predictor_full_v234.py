@@ -19,10 +19,11 @@ def load_data():
         'Product Type', 'Project Region', 'Project Geography/ Location', 'Licensor',
         'Shell (MOC)', 'Weld Overlay/ Clad Applicable (Yes or No)', 'Sourcing Restrictions (Yes or No)'
     ]
-    num_cols = [
+    num_cols_all = [
         'ID (mm)', 'Weight (MT)', 'Price($ / Kg)', 'Unit Cost($)', 'Total Cost($)',
         'Off top (%)', 'Unit Price($)', 'Total price($)', 'Cost ($ / Kg)'
     ]
+    num_cols = [col for col in num_cols_all if col in df.columns]
 
     if 'Bid Date' in df.columns:
         df['Bid Month'] = pd.to_datetime(df['Bid Date']).dt.month
@@ -32,19 +33,22 @@ def load_data():
 
     le_dict, inv_le_dict = {}, {}
     for col in cat_cols:
-        le = LabelEncoder()
-        df[col] = le.fit_transform(df[col].astype(str))
-        le_dict[col] = le
-        inv_le_dict[col] = dict(zip(le.transform(le.classes_), le.classes_))
+        if col in df.columns:
+            le = LabelEncoder()
+            df[col] = le.fit_transform(df[col].astype(str))
+            le_dict[col] = le
+            inv_le_dict[col] = dict(zip(le.transform(le.classes_), le.classes_))
+    cat_cols = [col for col in cat_cols if col in df.columns]
 
-    all_cols = [col for col in cat_cols + num_cols if col in df.columns]
+    all_cols = cat_cols + num_cols
     if 'Bid Month' in df.columns:
         all_cols.append('Bid Month')
 
-    X = df[all_cols]
+    X = df[all_cols].copy()
     y = LabelEncoder().fit_transform(df['Result(w/L)'])
     scaler = StandardScaler()
-    X[num_cols] = scaler.fit_transform(X[num_cols])
+    if num_cols:
+        X[num_cols] = scaler.fit_transform(X[num_cols])
 
     return X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, df
 
@@ -85,7 +89,8 @@ if st.button("🚩 Predict Now"):
     input_df = pd.DataFrame([user_input])
     for col in cat_cols:
         input_df[col] = le_dict[col].transform([input_df[col][0]])
-    input_df[num_cols] = scaler.transform(input_df[num_cols])
+    if num_cols:
+        input_df[num_cols] = scaler.transform(input_df[num_cols])
     if bid_month:
         input_df["Bid Month"] = bid_month
 
