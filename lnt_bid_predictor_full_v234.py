@@ -7,21 +7,31 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
-import plotly.express as px
 from io import BytesIO
-import datetime
 
-st.set_page_config(page_title="L&T Bid Predictor - Guided Smart Adjust", layout="wide")
+st.set_page_config(page_title="L&T Bid Predictor – Auto Fix", layout="wide")
 
 @st.cache_data
 def load_data(path):
     df = pd.read_excel(path)
-    cat_cols = [
+
+    required_cols = ['Product Type', 'Project Region', 'Project Geography/ Location', 'Licensor',
+                     'Shell (MOC)', 'Weld Overlay/ Clad Applicable (Yes or No)', 'Sourcing Restrictions (Yes or No)',
+                     'ID (mm)', 'Weight (MT)', 'Price($ / Kg)', 'Result(w/L)']
+
+    if not all(col in df.columns for col in required_cols):
+        missing = [col for col in required_cols if col not in df.columns]
+        raise ValueError(f"Missing required column(s): {missing}")
+
+    cat_cols = [col for col in [
         'Product Type', 'Project Region', 'Project Geography/ Location', 'Licensor',
         'Shell (MOC)', 'Weld Overlay/ Clad Applicable (Yes or No)', 'Sourcing Restrictions (Yes or No)'
-    ]
-    num_cols = ['ID (mm)', 'Weight (MT)', 'Price($ / Kg)', 'Unit Cost($)', 'Total Cost($)',
-                'Off top (%)', 'Unit Price($)', 'Total price($)', 'Cost ($ / Kg)']
+    ] if col in df.columns]
+
+    num_cols = [col for col in [
+        'ID (mm)', 'Weight (MT)', 'Price($ / Kg)', 'Unit Cost($)', 'Total Cost($)',
+        'Off top (%)', 'Unit Price($)', 'Total price($)', 'Cost ($ / Kg)'
+    ] if col in df.columns]
 
     if 'Bid Date' in df.columns:
         df['Bid Month'] = pd.to_datetime(df['Bid Date']).dt.month
@@ -39,6 +49,7 @@ def load_data(path):
     all_cols = cat_cols + num_cols
     if 'Bid Month' in df.columns:
         all_cols += ['Bid Month']
+
     X = df[all_cols]
     y = LabelEncoder().fit_transform(df['Result(w/L)'])
     scaler = StandardScaler()
@@ -46,10 +57,15 @@ def load_data(path):
 
     return X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, df
 
-uploaded_file = st.file_uploader("📁 Upload Excel File (with column: 'Result(w/L)')", type=['xlsx'])
+uploaded_file = st.file_uploader("📁 Upload Excel File", type=['xlsx'])
 if uploaded_file:
-    X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, full_data = load_data(uploaded_file)
+    try:
+        X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, full_data = load_data(uploaded_file)
+    except Exception as e:
+        st.error(f"❌ Error loading file: {e}")
+        st.stop()
 else:
+    st.warning("👆 Please upload an Excel file to continue.")
     st.stop()
 
 @st.cache_resource
@@ -61,7 +77,7 @@ def train_model(X, y):
 
 model, X_test, y_test = train_model(X, y)
 
-st.title("🏗️ L&T Bid Predictor – Guided Smart Adjust")
+st.title("🏗️ L&T Bid Predictor – Smart Auto Adjust")
 
 st.sidebar.header("📊 Model Performance")
 st.sidebar.metric("Accuracy", f"{accuracy_score(y_test, model.predict(X_test)):.2%}")
@@ -90,8 +106,8 @@ if st.button("🚩 Predict Now"):
     input_df[num_cols] = scaler.transform(input_df[num_cols])
     if bid_month:
         input_df["Bid Month"] = bid_month
-    input_df = input_df.reindex(columns=X.columns, fill_value=0)
 
+    input_df = input_df.reindex(columns=X.columns, fill_value=0)
     pred = model.predict(input_df)[0]
     proba = model.predict_proba(input_df)[0][pred]
     result = "✅ WIN" if pred == 1 else "❌ LOSE"
@@ -104,7 +120,7 @@ if st.button("🚩 Predict Now"):
         avg = X[feat].mean()
         if feat in cat_cols:
             val_name = list(inv_le_dict[feat].values())[list(inv_le_dict[feat].keys()).index(int(val))]
-            st.write(f"- **{feat}** is set to `{val_name}`, common value is `{inv_le_dict[feat][X[feat].value_counts().idxmax()]}`")
+            st.write(f"- **{feat}** is `{val_name}`, most common is `{inv_le_dict[feat][X[feat].value_counts().idxmax()]}`")
         else:
             direction = "higher" if val > avg else "lower"
             st.write(f"- **{feat}** is {direction} than average ({val:.2f} vs {avg:.2f})")
@@ -116,7 +132,7 @@ if st.button("🚩 Predict Now"):
             if feat in num_cols:
                 new_val = round(float(X[feat].mean()), 2)
                 suggested_changes[feat] = (float(input_df[feat].values[0]), new_val)
-                st.write(f"- **{feat}**: {input_df[feat].values[0]:.2f} ➝ {new_val:.2f} (suggested)")
+                st.write(f"- **{feat}**: {input_df[feat].values[0]:.2f} ➝ {new_val:.2f}")
             elif feat in cat_cols:
                 current_code = int(input_df[feat].values[0])
                 common_code = int(X[feat].value_counts().idxmax())
@@ -124,7 +140,7 @@ if st.button("🚩 Predict Now"):
                     old_label = inv_le_dict[feat][current_code]
                     new_label = inv_le_dict[feat][common_code]
                     suggested_changes[feat] = (old_label, new_label)
-                    st.write(f"- **{feat}**: '{old_label}' ➝ '{new_label}' (suggested)")
+                    st.write(f"- **{feat}**: '{old_label}' ➝ '{new_label}'")
 
         if st.button("✅ Apply Suggested Changes and Predict Again"):
             for feat, (old, new) in suggested_changes.items():
@@ -138,12 +154,13 @@ if st.button("🚩 Predict Now"):
             new_result = "✅ WIN" if new_pred == 1 else "❌ Still LOSE"
             st.markdown(f"### 🔁 New Prediction After Changes: {new_result} ({new_proba:.2%} confidence)")
             if new_result == "✅ WIN":
-                st.success("🎯 Prediction successfully improved to WIN with suggested changes!")
+                st.success("🎯 Prediction improved to WIN!")
             else:
-                st.warning("⚠️ Even after changes, bid is still predicted as LOSS")
+                st.warning("⚠️ Still predicted as LOSS after suggested changes.")
 
+    # 📥 Download Report
     buffer = BytesIO()
-    report = f"Prediction: {result} ({proba:.2%} confidence)\n\nTop Features:\n"
+    report = f"Prediction: {result} ({proba:.2%} confidence)\n\nTop Factors:\n"
     for feat in top_feats:
         report += f"- {feat}: {input_df[feat].values[0]}\n"
     buffer.write(report.encode())
