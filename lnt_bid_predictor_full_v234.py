@@ -11,7 +11,7 @@ import plotly.express as px
 from io import BytesIO
 import datetime
 
-st.set_page_config(page_title="L&T Bid Predictor - Full Version", layout="wide")
+st.set_page_config(page_title="L&T Bid Predictor - Smart Adjust", layout="wide")
 
 @st.cache_data
 def load_data(path):
@@ -39,7 +39,6 @@ def load_data(path):
         all_cols += ['Bid Month']
     X = df[all_cols]
     y = LabelEncoder().fit_transform(df['Result(w/L)'])
-
     scaler = StandardScaler()
     X[num_cols] = scaler.fit_transform(X[num_cols])
     return X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, df
@@ -55,7 +54,7 @@ def train_model(X, y):
 
 model, X_test, y_test = train_model(X, y)
 
-st.title("🏗️ L&T Bid Predictor – Full Dashboard")
+st.title("🏗️ L&T Bid Predictor – Phase 5: Smart Adjust")
 
 st.sidebar.header("📊 Model Performance")
 st.sidebar.metric("Accuracy", f"{accuracy_score(y_test, model.predict(X_test)):.2%}")
@@ -73,27 +72,6 @@ fig2, ax2 = plt.subplots()
 importance.plot(kind='barh', color='skyblue', ax=ax2)
 st.pyplot(fig2)
 
-# 📍 Region Analysis
-if 'Project Geography/ Location' in full_data.columns:
-    st.subheader("🌍 Geo Impact Analysis")
-    geo_df = full_data.copy()
-    geo_df['Result Encoded'] = y
-    geo_fig = px.histogram(geo_df, x='Project Geography/ Location', color='Result Encoded', barmode='group')
-    st.plotly_chart(geo_fig)
-
-# 📉 Historical Trend by Product
-if 'Product Type' in full_data.columns:
-    st.subheader("📉 Historical Win Rate by Product Type")
-    hist_fig = px.histogram(full_data, x='Product Type', color='Result(w/L)', barmode='group')
-    st.plotly_chart(hist_fig)
-
-# 🗓 Monthly Bid Trend
-if 'Bid Month' in X.columns:
-    st.subheader("📅 Win Trends by Bid Month")
-    month_fig = px.histogram(full_data, x='Bid Month', color='Result(w/L)', barmode='group')
-    st.plotly_chart(month_fig)
-
-# 🔍 Predict
 st.subheader("🔍 Predict Individual Bid")
 user_input = {}
 col1, col2 = st.columns(2)
@@ -117,16 +95,13 @@ if st.button("🚩 Predict Now"):
     if bid_month:
         input_df["Bid Month"] = bid_month
 
-    # ✅ Ensure input_df has exact columns in same order as X
     input_df = input_df.reindex(columns=X.columns, fill_value=0)
 
-    # 🔮 Prediction
     pred = model.predict(input_df)[0]
     proba = model.predict_proba(input_df)[0][pred]
     result = "✅ WIN" if pred == 1 else "❌ LOSE"
     st.markdown(f"### 🎯 Prediction: {result} ({proba:.2%} confidence)")
 
-    # 🧠 Explanation
     st.subheader("🧠 Why this outcome?")
     top_feats = importance.sort_values(ascending=False).head(3).index.tolist()
     for feat in top_feats:
@@ -135,11 +110,39 @@ if st.button("🚩 Predict Now"):
         direction = "higher" if val > avg else "lower"
         st.write(f"- **{feat}** is {direction} than average ({val:.2f} vs {avg:.2f})")
 
-    # 🛠 Suggestions
     st.subheader("🛠 Suggestions to Improve")
     for feat in top_feats:
         tip = "Try reducing" if input_df[feat].values[0] > X[feat].mean() else "Try optimizing"
         st.write(f"- {tip} **{feat}**")
+
+    # 🔁 Smart Auto Adjust
+    if result == "❌ LOSE":
+        st.subheader("🔁 Make this Bid WIN (Auto Adjust)")
+        adjusted_input_df = input_df.copy()
+
+        for feat in top_feats:
+            if feat in num_cols:
+                adjusted_input_df[feat] = X[feat].mean() * 0.9
+            elif feat in cat_cols:
+                most_common = X[feat].value_counts().idxmax()
+                adjusted_input_df[feat] = most_common
+
+        adjusted_input_df = adjusted_input_df.reindex(columns=X.columns, fill_value=0)
+        new_pred = model.predict(adjusted_input_df)[0]
+        new_proba = model.predict_proba(adjusted_input_df)[0][new_pred]
+        new_result = "✅ WIN" if new_pred == 1 else "❌ Still LOSE"
+
+        if new_result == "✅ WIN":
+            st.success("🎯 Success: Auto-adjusted bid turns into WIN!")
+            st.markdown(f"**Updated Confidence:** {new_proba:.2%}")
+            st.markdown("#### 🔧 Adjusted Values:")
+            for feat in top_feats:
+                old = input_df[feat].values[0]
+                new = adjusted_input_df[feat].values[0]
+                if old != new:
+                    st.write(f"- {feat}: {old:.2f} ➝ {new:.2f}")
+        else:
+            st.warning("⚠️ Tried all adjustments but still predicted as LOSS")
 
     # 📥 Download Report
     report = f"Prediction: {result} ({proba:.2%})\\n\\nTop Factors:\\n"
