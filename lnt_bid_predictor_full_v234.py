@@ -11,11 +11,11 @@ import plotly.express as px
 from io import BytesIO
 import datetime
 
-st.set_page_config(page_title="L&T Bid Predictor – Smart Adjust", layout="wide")
+st.set_page_config(page_title="L&T Bid Predictor - Guided Adjust", layout="wide")
 
 @st.cache_data
 def load_data(path):
-    df = pd.read_excel("data.xlsx")
+    df = pd.read_excel(path)
     cat_cols = [
         'Product Type', 'Project Region', 'Project Geography/ Location', 'Licensor',
         'Shell (MOC)', 'Weld Overlay/ Clad Applicable (Yes or No)', 'Sourcing Restrictions (Yes or No)'
@@ -32,14 +32,13 @@ def load_data(path):
         le = LabelEncoder()
         df[col] = le.fit_transform(df[col].astype(str))
         le_dict[col] = le
-        inv_le_dict[col] = dict(zip(le.classes_, le.transform(le.classes_)))
+        inv_le_dict[col] = dict(zip(le.transform(le.classes_), le.classes_))
 
     all_cols = cat_cols + num_cols
     if 'Bid Month' in df.columns:
         all_cols += ['Bid Month']
     X = df[all_cols]
     y = LabelEncoder().fit_transform(df['Result(w/L)'])
-
     scaler = StandardScaler()
     X[num_cols] = scaler.fit_transform(X[num_cols])
 
@@ -56,30 +55,19 @@ def train_model(X, y):
 
 model, X_test, y_test = train_model(X, y)
 
-st.title("🏗️ L&T Bid Predictor – Smart Adjust & Apply")
+st.title("🏗️ L&T Bid Predictor – Guided Smart Adjust")
 
 st.sidebar.header("📊 Model Performance")
 st.sidebar.metric("Accuracy", f"{accuracy_score(y_test, model.predict(X_test)):.2%}")
 st.sidebar.text("Classification Report")
 st.sidebar.text(classification_report(y_test, model.predict(X_test)))
 
-st.subheader("📌 Confusion Matrix")
-fig1, ax1 = plt.subplots()
-sns.heatmap(confusion_matrix(y_test, model.predict(X_test)), annot=True, fmt="d", cmap="Blues", ax=ax1)
-st.pyplot(fig1)
-
-st.subheader("📊 Feature Importance")
-importance = pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=True)
-fig2, ax2 = plt.subplots()
-importance.plot(kind='barh', color='skyblue', ax=ax2)
-st.pyplot(fig2)
-
 st.subheader("🔍 Predict Individual Bid")
 user_input = {}
 col1, col2 = st.columns(2)
 with col1:
     for col in cat_cols:
-        user_input[col] = st.selectbox(col, list(inv_le_dict[col].keys()))
+        user_input[col] = st.selectbox(col, list(inv_le_dict[col].values()))
 with col2:
     for col in num_cols:
         user_input[col] = st.slider(col, float(full_data[col].min()), float(full_data[col].max()), float(full_data[col].median()))
@@ -96,7 +84,6 @@ if st.button("🚩 Predict Now"):
     input_df[num_cols] = scaler.transform(input_df[num_cols])
     if bid_month:
         input_df["Bid Month"] = bid_month
-
     input_df = input_df.reindex(columns=X.columns, fill_value=0)
 
     pred = model.predict(input_df)[0]
@@ -105,61 +92,54 @@ if st.button("🚩 Predict Now"):
     st.markdown(f"### 🎯 Prediction: {result} ({proba:.2%} confidence)")
 
     st.subheader("🧠 Why this outcome?")
-    top_feats = importance.sort_values(ascending=False).head(3).index.tolist()
+    top_feats = pd.Series(model.feature_importances_, index=X.columns).sort_values(ascending=False).head(3).index.tolist()
     for feat in top_feats:
         val = input_df[feat].values[0]
         avg = X[feat].mean()
-        direction = "higher" if val > avg else "lower"
-        st.write(f"- **{feat}** is {direction} than average ({val:.2f} vs {avg:.2f})")
+        if feat in cat_cols:
+            val_name = list(inv_le_dict[feat].values())[list(inv_le_dict[feat].keys()).index(int(val))]
+            st.write(f"- **{feat}** is set to `{val_name}`, common value is `{inv_le_dict[feat][X[feat].value_counts().idxmax()]}`")
+        else:
+            direction = "higher" if val > avg else "lower"
+            st.write(f"- **{feat}** is {direction} than average ({val:.2f} vs {avg:.2f})")
 
-    st.subheader("🛠 Suggestions to Improve")
-    for feat in top_feats:
-        tip = "Try reducing" if input_df[feat].values[0] > X[feat].mean() else "Try optimizing"
-        st.write(f"- {tip} **{feat}**")
-
-    # 🔁 Smart Adjust
     if result == "❌ LOSE":
-        st.subheader("🔁 Make this Bid WIN (Auto Adjust)")
-
-        adjusted_input_df = input_df.copy()
-        applied_changes = {}
-
+        st.subheader("🛠 Suggested Changes to Convert to WIN")
+        suggested_changes = {}
         for feat in top_feats:
             if feat in num_cols:
-                adjusted_input_df[feat] = X[feat].mean() * 0.9
-                applied_changes[feat] = (input_df[feat].values[0], adjusted_input_df[feat].values[0])
+                new_val = round(float(X[feat].mean()), 2)
+                suggested_changes[feat] = (float(input_df[feat].values[0]), new_val)
+                st.write(f"- **{feat}**: {input_df[feat].values[0]:.2f} ➝ {new_val:.2f} (suggested)")
             elif feat in cat_cols:
-                most_common = X[feat].value_counts().idxmax()
-                adjusted_input_df[feat] = most_common
-                original = input_df[feat].values[0]
-                if original != most_common:
-                    original_label = list(inv_le_dict[feat].keys())[list(inv_le_dict[feat].values()).index(original)]
-                    new_label = list(inv_le_dict[feat].keys())[list(inv_le_dict[feat].values()).index(most_common)]
-                    applied_changes[feat] = (original_label, new_label)
+                current_code = int(input_df[feat].values[0])
+                common_code = int(X[feat].value_counts().idxmax())
+                if current_code != common_code:
+                    old_label = inv_le_dict[feat][current_code]
+                    new_label = inv_le_dict[feat][common_code]
+                    suggested_changes[feat] = (old_label, new_label)
+                    st.write(f"- **{feat}**: '{old_label}' ➝ '{new_label}' (suggested)")
 
-        adjusted_input_df = adjusted_input_df.reindex(columns=X.columns, fill_value=0)
-        new_pred = model.predict(adjusted_input_df)[0]
-        new_proba = model.predict_proba(adjusted_input_df)[0][new_pred]
-        new_result = "✅ WIN" if new_pred == 1 else "❌ Still LOSE"
+        if st.button("✅ Apply Suggested Changes and Predict Again"):
+            for feat, (old, new) in suggested_changes.items():
+                if feat in cat_cols:
+                    input_df[feat] = le_dict[feat].transform([new])[0]
+                else:
+                    input_df[feat] = new
+            input_df = input_df.reindex(columns=X.columns, fill_value=0)
+            new_pred = model.predict(input_df)[0]
+            new_proba = model.predict_proba(input_df)[0][new_pred]
+            new_result = "✅ WIN" if new_pred == 1 else "❌ Still LOSE"
+            st.markdown(f"### 🔁 New Prediction After Changes: {new_result} ({new_proba:.2%} confidence)")
+            if new_result == "✅ WIN":
+                st.success("🎯 Prediction successfully improved to WIN with suggested changes!")
+            else:
+                st.warning("⚠️ Even after changes, bid is still predicted as LOSS")
 
-        if new_result == "✅ WIN":
-            st.success("🎯 Success: Auto-adjusted bid turns into WIN!")
-            st.markdown(f"**Updated Confidence:** {new_proba:.2%}")
-            st.markdown("#### 🔧 Adjusted Values:")
-            for feat, (old, new) in applied_changes.items():
-                st.write(f"- **{feat}**: {old} ➝ {new}")
-
-            if st.button("✅ Apply Adjustments to Form"):
-                st.experimental_set_query_params(**user_input)  # optional: save state
-                st.rerun()
-        else:
-            st.warning("⚠️ Tried adjustments but still predicted as LOSS")
-
-    # 📥 Download Report
-    report = f"Prediction: {result} ({proba:.2%})\\n\\nTop Factors:\\n"
-    for feat in top_feats:
-        report += f"- {feat}: input={input_df[feat].values[0]:.2f}, avg={X[feat].mean():.2f}\\n"
     buffer = BytesIO()
+    report = f"Prediction: {result} ({proba:.2%} confidence)\n\nTop Features:\n"
+    for feat in top_feats:
+        report += f"- {feat}: {input_df[feat].values[0]}\n"
     buffer.write(report.encode())
     buffer.seek(0)
     st.download_button("📥 Download Summary Report", buffer, file_name="prediction_summary.txt")
