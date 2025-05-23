@@ -13,13 +13,11 @@ st.set_page_config(page_title="L&T Bid Predictor – LightGBM Model", layout="wi
 def load_data():
     df = pd.read_excel("data.xlsx")
 
-    # Safe column check
     required_cols = ['Result(w/L)', 'Weight (MT)', 'Price($ / Kg)', 'Total price($)']
     missing = [col for col in required_cols if col not in df.columns]
     if missing:
         raise KeyError(f"Missing required columns: {missing}")
 
-    # Preprocessing
     cat_cols = [
         'Product Type', 'Project Region', 'Project Geography/ Location', 'Licensor',
         'Shell (MOC)', 'Weld Overlay/ Clad Applicable (Yes or No)', 'Sourcing Restrictions (Yes or No)'
@@ -29,7 +27,7 @@ def load_data():
     df = df.dropna(subset=['Result(w/L)'])
     df.fillna(method='ffill', inplace=True)
 
-    # Business logic feature: Total Bid Value
+    # Total Bid Value = Weight × Price
     df['Total Bid Value'] = df['Weight (MT)'] * df['Price($ / Kg)']
     num_cols.append('Total Bid Value')
 
@@ -51,7 +49,6 @@ def load_data():
 
     return X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, df
 
-# Load and prepare data
 X, y, scaler, le_dict, inv_le_dict, cat_cols, num_cols, full_data = load_data()
 
 @st.cache_resource
@@ -63,8 +60,7 @@ def train_model(X, y):
 
 model, X_test, y_test = train_model(X, y)
 
-# Streamlit UI
-st.title("🏗️ L&T Bid Predictor – Price Aware Model")
+st.title("🏗️ L&T Bid Predictor – LightGBM & Price Logic")
 
 st.sidebar.header("📊 Model Performance")
 st.sidebar.metric("Accuracy", f"{accuracy_score(y_test, model.predict(X_test)):.2%}")
@@ -101,17 +97,16 @@ if st.button("🚩 Predict Bid Result"):
     top_feats = feature_importance.sort_values(ascending=False).head(3)
 
     for feat in top_feats.index:
-        st.write(f\"- **{feat}**: Importance Score = {top_feats[feat]:.2f}\")
+        st.write(f"- **{feat}**: Importance Score = {top_feats[feat]:.2f}")
 
-    st.subheader(\"📊 Total Bid Insight\")
+    st.subheader("📊 Total Bid Insight")
     bid_val = user_input['Price($ / Kg)'] * user_input['Weight (MT)']
-    st.markdown(f\"**💰 Total Bid Value:** ${bid_val:,.2f}\")
+    st.markdown(f"**💰 Total Bid Value:** ${bid_val:,.2f}")
 
-    # Summary report
     buffer = BytesIO()
-    report = f\"Prediction: {result} ({proba:.2%})\\nTop Features:\\n\"
+    report = f"Prediction: {result} ({proba:.2%})\nTop Features:\n"
     for feat in top_feats.index:
-        report += f\"- {feat}: importance = {top_feats[feat]:.2f}\\n\"
+        report += f"- {feat}: importance = {top_feats[feat]:.2f}\n"
     buffer.write(report.encode())
     buffer.seek(0)
-    st.download_button(\"📥 Download Summary Report\", buffer, file_name=\"bid_prediction_summary.txt\")
+    st.download_button("📥 Download Summary Report", buffer, file_name="bid_prediction_summary.txt")
