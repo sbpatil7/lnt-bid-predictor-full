@@ -3,12 +3,12 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, classification_report
 import lightgbm as lgb
 import matplotlib.pyplot as plt
 from io import BytesIO
 
-st.set_page_config(page_title="L&T Bid Predictor – LightGBM Model", layout="wide")
+st.set_page_config(page_title="L&T Bid Predictor – LightGBM", layout="wide")
 
 def load_data():
     df = pd.read_excel("data.xlsx")
@@ -16,7 +16,9 @@ def load_data():
     required_cols = ['Result(w/L)', 'Weight (MT)', 'Price($ / Kg)', 'Total price($)']
     missing = [col for col in required_cols if col not in df.columns]
     if missing:
-        raise KeyError(f"Missing required columns: {missing}")
+        st.warning(f"⚠️ Missing columns: {missing}. Using default values where needed.")
+        for col in missing:
+            df[col] = 0  # Add default value
 
     cat_cols = [
         'Product Type', 'Project Region', 'Project Geography/ Location', 'Licensor',
@@ -27,7 +29,7 @@ def load_data():
     df = df.dropna(subset=['Result(w/L)'])
     df.fillna(method='ffill', inplace=True)
 
-    # Total Bid Value = Weight × Price
+    # Add Total Bid Value = Weight × Price
     df['Total Bid Value'] = df['Weight (MT)'] * df['Price($ / Kg)']
     num_cols.append('Total Bid Value')
 
