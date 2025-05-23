@@ -1,6 +1,6 @@
 pandas
 numpy
 scikit-learn
+lightgbm
 matplotlib
 streamlit
-interpret
